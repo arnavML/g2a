@@ -1,0 +1,21 @@
+[package]
+name = "vfuzz"
+version = "0.1.0"
+edition = "2024"
+publish = false
+license = "GPL-3.0-or-later"
+
+# Standalone: not a workspace member, so it never slows down or breaks the
+# main build. See README.md.
+[workspace]
+
+[dependencies]
+victory-shader = { path = "../crates/victory-shader" }
+victory-formats = { path = "../crates/victory-formats" }
+victory-pe = { path = "../crates/victory-pe" }
+victory-game = { path = "../crates/victory-game" }
+
+[profile.release]
+debug = 1
+overflow-checks = true
+debug-assertions = true

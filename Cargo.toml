@@ -2,7 +2,7 @@
 resolver = "3"
 members = ["crates/*", "apps/*", "xtask"]
 # Fixtures are standalone crates built on demand by integration tests.
-exclude = ["tests/fixtures"]
+exclude = ["tests/fixtures", "fuzz"]
 
 [workspace.package]
 version = "0.1.0"
