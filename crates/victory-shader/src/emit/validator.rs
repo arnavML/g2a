@@ -27,6 +27,14 @@ const IID_IDXC_VALIDATOR: Guid = Guid(
     0x4826,
     [0x98, 0x11, 0x28, 0x57, 0xe7, 0x97, 0xf4, 0x9a],
 );
+const IID_IDXC_VERSION_INFO: Guid = Guid(
+    0xb04f_5b50,
+    0x2059,
+    0x4f12,
+    [0xa8, 0xff, 0xa1, 0xe0, 0xcd, 0xe1, 0xcc, 0x7e],
+);
+/// The first validator that knows Shader Model 6.6.
+const MIN_VALIDATOR: (u32, u32) = (1, 6);
 /// `DxcValidatorFlags_InPlaceEdit`: sign the container we pass.
 const IN_PLACE_EDIT: u32 = 1;
 
@@ -155,9 +163,34 @@ impl Validator {
             if hr < 0 || object.is_null() {
                 return Err(format!("DxcCreateInstance(validator) failed: {hr:#x}"));
             }
-            Ok(Validator {
-                object: object.cast(),
-            })
+            let object: Object = object.cast();
+            // An older validator does not know Shader Model 6.6: it rejects
+            // such containers, and some (the Windows 10.0.19041 SDK's) end
+            // the process with an access violation on a 6.6 compute shader.
+            // IUnknown::QueryInterface (slot 0), then
+            // IDxcVersionInfo::GetVersion (slot 3).
+            let qi: unsafe extern "system" fn(Object, *const Guid, *mut *mut c_void) -> Hresult =
+                method(object, 0);
+            let mut info = std::ptr::null_mut();
+            if qi(object, &IID_IDXC_VERSION_INFO, &mut info) >= 0 && !info.is_null() {
+                let info: Object = info.cast();
+                let get_version: unsafe extern "system" fn(Object, *mut u32, *mut u32) -> Hresult =
+                    method(info, 3);
+                let (mut major, mut minor) = (0, 0);
+                let hr = get_version(info, &mut major, &mut minor);
+                release(info);
+                if hr >= 0 && (major, minor) < MIN_VALIDATOR {
+                    release(object);
+                    return Err(format!(
+                        "{} is validator {major}.{minor}; Shader Model 6.6 needs {}.{} or newer \
+                         (set VICTORY_DXIL to a current DXC release's dxil.dll)",
+                        String::from_utf16_lossy(&name[..name.len() - 1]),
+                        MIN_VALIDATOR.0,
+                        MIN_VALIDATOR.1,
+                    ));
+                }
+            }
+            Ok(Validator { object })
         }
     }
 
