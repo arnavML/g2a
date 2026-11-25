@@ -153,11 +153,11 @@ fn build_cs(body: &[u32], threads: u32, lds_bytes: u32) -> HostShader {
     lower_words(words, threads, lds_bytes, 0)
 }
 
-/// Lowers a whole program of [`build_cs`]'s layout; `rsrc2`: more bits of
-/// that register.
-fn lower_words(words: Vec<u32>, threads: u32, lds_bytes: u32, rsrc2: u32) -> HostShader {
+/// The compute program [`lower_words`] lowers: root constants in s0..s3,
+/// a descriptor table address in s4, one UAV.
+fn cs_native(words: Vec<u32>, threads: u32, lds_bytes: u32, rsrc2: u32) -> NativeProgram {
     let code: Vec<u8> = words.iter().flat_map(|w| w.to_le_bytes()).collect();
-    let native = NativeProgram {
+    NativeProgram {
         stage: HwStage::Cs,
         wave64: false,
         vgprs: 8,
@@ -194,7 +194,13 @@ fn lower_words(words: Vec<u32>, threads: u32, lds_bytes: u32, rsrc2: u32) -> Hos
             threads: [threads, 1, 1],
         }),
         code,
-    };
+    }
+}
+
+/// Lowers a whole program of [`build_cs`]'s layout; `rsrc2`: more bits of
+/// that register.
+fn lower_words(words: Vec<u32>, threads: u32, lds_bytes: u32, rsrc2: u32) -> HostShader {
+    let native = cs_native(words, threads, lds_bytes, rsrc2);
 
     let p = ir::build(&native.code, native.wave64, native.vgprs).expect("ir::build");
     let st = structure::structure(&p).expect("structure");
@@ -1730,4 +1736,41 @@ fn whole_wave_f64_sum_and_cvt_f32_f64() {
             );
         }
     }
+}
+
+/// A 16-bit typed-format load (`tbuffer_load_format_d16_*`) packs two
+/// channels per VGPR; the typed-format path writes a dword per channel, so
+/// it is refused rather than lowered into the wrong registers (it used to
+/// write the unpacked channels, one past its destination).
+#[test]
+fn a_16_bit_typed_format_load_is_refused() {
+    let mut words = vec![s_mov_b32(5, 0x80)];
+    words.extend_from_slice(&s_load_dwordx4(8, 4));
+    for i in 0..4u8 {
+        words.push(vop1(0x001, i + 1, sgpr(i)));
+    }
+    // tbuffer_load_format_d16_xy v5, v1, s[8:11], s7 offen
+    words.extend([0xE9F9_5BCF, 0x0762_0501]);
+    words.extend_from_slice(&buffer_store_dword(5, 8, 0));
+    words.push(S_ENDPGM);
+    let native = cs_native(words, 1, 0, 0);
+    let p = ir::build(&native.code, native.wave64, native.vgprs).expect("ir::build");
+    let st = structure::structure(&p).expect("structure");
+    let res =
+        resource::track(&p, &native.layout, native.stage, Some(&st)).expect("resource::track");
+    let io = io::raise(&p, &native).expect("io::raise");
+    let err = lower::lower(&lower::Parts {
+        native: &native,
+        p: &p,
+        st: &st,
+        io: &io,
+        res: &res,
+        inputs: Vec::new(),
+        outputs: Vec::new(),
+        prims: Vec::new(),
+        mesh_stride: 0,
+    })
+    .err()
+    .expect("refused");
+    assert!(format!("{err:?}").contains("16-bit typed-format"), "{err:?}");
 }

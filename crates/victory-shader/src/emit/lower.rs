@@ -10252,6 +10252,11 @@ impl<'a> Lower<'a> {
         };
         // d16: two 16-bit channels per VGPR, low half first.
         let d16 = name.starts_with("buffer_") && name.contains("_format_d16_");
+        // A typed d16 load packs its channels two per VGPR like `buffer_`'s;
+        // the format path below writes a whole dword per channel.
+        if name.starts_with("tbuffer_") && name.contains("_d16_") {
+            return Err("a 16-bit typed-format buffer load");
+        }
         let plain = name.replace("_format_d16_", "_format_");
         let (typed, count) = match plain
             .strip_prefix("buffer_load_")
