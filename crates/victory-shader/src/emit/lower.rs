@@ -27,6 +27,10 @@ pub(super) mod intersect;
 
 #[path = "guest_address.rs"]
 mod guest_address;
+#[path = "mask_reads.rs"]
+mod mask_reads;
+pub(super) use mask_reads::reads_mask_as_data;
+use mask_reads::selects_by_number;
 #[path = "packed_mask.rs"]
 mod packed_mask;
 #[path = "typed_views.rs"]
@@ -1057,47 +1061,6 @@ pub fn host_max_wave() -> u32 {
 thread_local! {
     /// A test's host wave size, for its thread only ([`set_host_max_wave`] is the process's).
     pub(super) static TEST_HOST_WAVE: std::cell::Cell<Option<u32>> = const { std::cell::Cell::new(None) };
-}
-
-pub(super) fn reads_mask_as_data(st: &Structured, i: &Inst) -> bool {
-    let is_mask = |v: Value| st.masks.contains_key(&v) || st.highs.contains_key(&v);
-    let ops: Vec<&Operand> = match &i.fields {
-        // A mask operation (its result a mask) is no data use.
-        Fields::Sop { .. }
-            if i.writes
-                .iter()
-                .any(|&(r, w)| matches!(r, Reg::S(_)) && is_mask(w)) =>
-        {
-            return false;
-        }
-        Fields::Sop { src, .. } => src.iter().collect(),
-        Fields::Valu(v)
-            if !matches!(i.name(), "v_cndmask_b32") && !i.name().contains("_co_ci_") =>
-        {
-            v.src.iter().collect()
-        }
-        _ => return false,
-    };
-    ops.into_iter().any(|op| match *op {
-        Operand::Scalar { code, .. } if code != NULL => i.read(Reg::S(code)).is_some_and(is_mask),
-        _ => false,
-    })
-}
-
-/// A `v_cndmask_b32` that picks by a lane mask the code holds as a number
-/// (no tracked mask): it reads this lane's bit of that number, so in compute
-/// it needs the console's lane order like any other cross-lane read.
-fn selects_by_number(st: &Structured, i: &Inst) -> bool {
-    if i.name() != "v_cndmask_b32" {
-        return false;
-    }
-    let Fields::Valu(v) = &i.fields else { return false };
-    match v.src.get(2) {
-        Some(&Operand::Scalar { code, .. }) => {
-            i.read(Reg::S(code)).is_some_and(|m| !st.masks.contains_key(&m))
-        }
-        _ => false,
-    }
 }
 
 /// The parameters packing 16-bit rows two per dword and where each lays

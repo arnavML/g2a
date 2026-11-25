@@ -623,7 +623,9 @@ fn v_cndmask_by_a_numeric_mask_reads_the_lane_bit() {
         ([0xFFFF_FFFF, 0, 0, 0], 1),
     ];
     let inputs: Vec<[u32; 4]> = cases.iter().map(|c| c.0).collect();
-    run_cases(&shader, &inputs, |backend, i, inp, got| {
+    // Cross-lane code declares WaveSize(32), which WARP's pipeline
+    // creation refuses: hardware only.
+    run_cases_on(&shader, &inputs, &[("hardware", false)], |backend, i, inp, got| {
         assert_eq!(got, cases[i].1, "{backend}: lane 0 of mask {:#x}", inp[0]);
     });
 }
