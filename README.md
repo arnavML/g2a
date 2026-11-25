@@ -19,6 +19,8 @@ To warm the shader cache, open `victory-warm.exe` in the installed runtime direc
 
 For a manual build, run `.\Initialize-FormatTables.ps1`, then `cargo build --locked --release -p victory --features diagnostics --bins`. The release binaries are in `target\release`. Place all three together outside the checkout and pass the game executable path to `victory-play.exe`. Custom data and cache directories are documented in the configuration example. [Configuration example](victory.example.toml)
 
+To run the test suite, use `cargo test --workspace --locked`. The shader tests validate DXIL with Shader Model 6.6, which needs a DXIL validator of version 1.6 or newer. By default they use the newest Windows SDK's `dxil.dll`. On Windows SDK 10.0.19041 or older, install SDK 10.0.22000 or newer, or set `VICTORY_DXIL` to the `bin\x64\dxil.dll` of a current [DirectX Shader Compiler release](https://github.com/microsoft/DirectXShaderCompiler/releases).
+
 ## Try experimental ray tracing on Radeon
 
 After running **Setup.cmd**, open **DexNom Runtime (Experimental RT)** from the Windows Start menu. This starts the game with the acceleration-structure builder, ray traversal and lighting resolve enabled. The shortcut uses your existing saves. Open **DexNom Runtime** for the usual renderer.
