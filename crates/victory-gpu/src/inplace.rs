@@ -1393,8 +1393,14 @@ mod tests {
             assert!(same(start as *const u8, &got), "the GPU reads the title buffer's bytes");
             rig.store(&placed.buffer, placed.bias + 16, &[0xa5; 64]).unwrap();
             assert!(same((start + 16) as *const u8, &[0xa5; 64]), "the GPU's write is at the title's address");
-            drop(placed);
-            // Half of it decommitted: turned down, the host not asked.
+            drop((placed, rig));
+            mem::VirtualFree(base.cast(), 0, mem::MEM_RELEASE);
+            // Half of it decommitted: turned down, the host not asked. (A
+            // fresh allocation: the runtime may release the heap it opened
+            // over the first one only later, and until then that memory
+            // cannot be decommitted.)
+            let base = mem::VirtualAlloc(std::ptr::null(), 8 * K64, mem::MEM_RESERVE | mem::MEM_COMMIT | MEM_WRITE_WATCH, mem::PAGE_READWRITE).cast::<u8>();
+            let start = base as u64 + K64 as u64 + 0x1230;
             assert_ne!(mem::VirtualFree(base.add(2 * K64).cast(), K64, mem::MEM_DECOMMIT), 0);
             assert!(matches!(place_part(&device, start, len), Err(None)));
             mem::VirtualFree(base.cast(), 0, mem::MEM_RELEASE);
