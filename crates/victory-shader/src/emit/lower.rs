@@ -1084,6 +1084,22 @@ pub(super) fn reads_mask_as_data(st: &Structured, i: &Inst) -> bool {
     })
 }
 
+/// A `v_cndmask_b32` that picks by a lane mask the code holds as a number
+/// (no tracked mask): it reads this lane's bit of that number, so in compute
+/// it needs the console's lane order like any other cross-lane read.
+fn selects_by_number(st: &Structured, i: &Inst) -> bool {
+    if i.name() != "v_cndmask_b32" {
+        return false;
+    }
+    let Fields::Valu(v) = &i.fields else { return false };
+    match v.src.get(2) {
+        Some(&Operand::Scalar { code, .. }) => {
+            i.read(Reg::S(code)).is_some_and(|m| !st.masks.contains_key(&m))
+        }
+        _ => false,
+    }
+}
+
 /// The parameters packing 16-bit rows two per dword and where each lays
 /// its elements out: (first row, [(dword, register, column, columns)]).
 ///
@@ -1299,6 +1315,7 @@ impl<'a> Lower<'a> {
                     || matches!(n, "v_readlane_b32" | "v_writelane_b32")
                     || matches!(&i.fields, Fields::Valu(v) if v.dpp.is_some())
                     || reads_mask_as_data(x.st, i)
+                    || selects_by_number(x.st, i)
             }) || lane_constant_masks(x.st)
                 // (a branch the wave takes together asks the wave)
                 || !x.st.wide.is_empty();
