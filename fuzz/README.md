@@ -18,6 +18,8 @@ The release profile keeps overflow checks and debug assertions on. A broken inva
 | `pe` | random PE images and import libraries |
 | `xma` | random XMA packets |
 | `sgd5` | random SGD5 records and shader packs |
+| `texture` | random texture descriptors through the GFX10 layout. Each texture's tiled data is checked by detiling after tiling (a round trip), and no two mips or slices may share tiled bytes. |
+| `bcpack` | random BCPack streams for each BC format (needs the format tables; see the top-level README) |
 | `emit` | random compute programs, through the whole translator (IR, structure, resources, IO, DXIL) |
 | `emit2` | shader-like compute programs (VALU work, compares, selects, lane branches, buffer loads, LDS reads, writes and atomics, barriers, stores), through the whole translator. About a third of these are translated fully. |
 

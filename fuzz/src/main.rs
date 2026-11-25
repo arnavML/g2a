@@ -207,6 +207,94 @@ fn main() {
             let _ = victory_game::shaderpack::program_id(&d);
             None
         }),
+        "texture" => run("texture", iters, seed, |r| {
+            use victory_formats::texture::*;
+            let side = |r: &mut Rng| match r.below(8) { 0 => r.next() as u32, 1 => 1 + r.below(16384) as u32, _ => 1 + r.below(300) as u32 };
+            let desc = TextureDesc {
+                dimension: [Dimension::Tex1d, Dimension::Tex2d, Dimension::Tex3d][r.below(3) as usize],
+                width: side(r), height: side(r), depth_or_array: if r.below(4) == 0 { side(r) } else { 1 + r.below(6) as u32 },
+                mips: r.below(17) as u32,
+                format: if r.below(4) == 0 { r.below(135) as u32 } else { [28, 87, 71, 77, 98, 10, 2, 41, 40, 45, 20, 61, 49, 24, 16, 95, 80, 83, 55, 56][r.below(20) as usize] },
+                samples: [1, 1, 1, 1, 1, 1, 2, 4, 8, 16, 3, 0][r.below(12) as usize],
+                swizzle: Swizzle(if r.below(4) == 0 { r.below(32) as u32 } else { [0, 1, 2, 5, 6, 9, 10, 17, 18, 21, 22, 23, 24, 25, 26, 27][r.below(16) as usize] }),
+            };
+            std::fs::write("last-texture.txt", format!("{desc:?}")).ok();
+            let Ok(t) = Texture::new(&desc) else { tally("texture refused"); return None };
+            tally("texture ok");
+            for p in &t.planes {
+                let l = &p.layout;
+                for _ in 0..4 {
+                    let mip = r.below(l.mips.len() as u64 + 1) as u32;
+                    let (x, y, z) = (r.below(300) as u32, r.below(300) as u32, r.below(8) as u32);
+                    let _ = l.offset(mip, x, y, z);
+                    let _ = l.bytes_from(mip);
+                    if l.size > 8 << 20 || mip as usize >= l.mips.len() { continue; }
+                    let m = l.subresource_depth(mip);
+                    let tiled = vec![0u8; l.bytes_from(mip) as usize];
+                    let (w, h) = ((desc.width >> mip).max(1) as usize, (desc.height >> mip).max(1) as usize);
+                    let row = w * l.desc.element_bytes as usize + r.below(64) as usize;
+                    let depth_pitch = row * h;
+                    let need = depth_pitch * m.max(1) as usize;
+                    if need > 32 << 20 { continue; }
+                    let mut linear = vec![0u8; need];
+                    let slice = r.below(4) as u32;
+                    tally(if l.detile(&tiled, mip, slice, &mut linear, row, depth_pitch).is_ok() { "detile ok" } else { "detile refused" });
+                    // Round trip: tiling distinct data and detiling it gives it back, so
+                    // no two elements of a subresource share tiled bytes.
+                    let src: Vec<u8> = (0..need).map(|_| r.next() as u8).collect();
+                    let mut tiled = tiled;
+                    if l.tile(&mut tiled, mip, slice, &src, row, depth_pitch).is_ok() {
+                        let mut back = vec![0u8; need];
+                        l.detile(&tiled, mip, slice, &mut back, row, depth_pitch).expect("detile after tile");
+                        let bytes = l.mips[mip as usize].width as usize * l.desc.element_bytes as usize;
+                        let rows = l.mips[mip as usize].height as usize;
+                        for d in 0..m.max(1) as usize { for y in 0..rows {
+                            let at = d * depth_pitch + y * row;
+                            assert_eq!(&back[at..at + bytes], &src[at..at + bytes], "round trip differs: mip {mip} slice {slice} depth {d} row {y}: {:?}", l.desc);
+                        } }
+                        tally("round trip ok");
+                    }
+                }
+            }
+            // Two subresources never share tiled bytes: tile one, then the other,
+            // and the first still detiles to what it was given.
+            for p in &t.planes {
+                let l = &p.layout;
+                if l.size > 8 << 20 || l.mips.is_empty() { continue; }
+                let slices = if desc.dimension == Dimension::Tex3d { 1 } else { l.slices };
+                let pick = |r: &mut Rng| (r.below(l.mips.len() as u64) as u32, r.below(u64::from(slices)) as u32);
+                let (a, b) = (pick(r), pick(r));
+                if a == b { continue; }
+                let mut tiled = vec![0u8; l.size as usize];
+                let size = |mip: u32| {
+                    let m = &l.mips[mip as usize];
+                    let row = m.width as usize * l.desc.element_bytes as usize;
+                    (row, row * m.height as usize, row * m.height as usize * m.depth.max(1) as usize)
+                };
+                let (ra, da, na) = size(a.0);
+                let (rb, db, nb) = size(b.0);
+                if na.max(nb) > 32 << 20 { continue; }
+                let src_a: Vec<u8> = (0..na).map(|_| r.next() as u8).collect();
+                let src_b: Vec<u8> = (0..nb).map(|_| r.next() as u8).collect();
+                if l.tile(&mut tiled, a.0, a.1, &src_a, ra, da).is_err() || l.tile(&mut tiled, b.0, b.1, &src_b, rb, db).is_err() { continue; }
+                let mut back = vec![0u8; na];
+                l.detile(&tiled, a.0, a.1, &mut back, ra, da).expect("detile");
+                assert!(back == src_a, "subresources {a:?} and {b:?} overlap: {:?}", l.desc);
+                tally("no overlap");
+            }
+            None
+        }),
+        "bcpack" => {
+            let tables = victory_formats::bcpack::Tables::builtin().expect("BCPack tables (run Initialize-FormatTables.ps1)");
+            run("bcpack", iters, seed, move |r| {
+                let bc = [1u8, 3, 4, 5, 6, 7, 2][r.below(7) as usize];
+                let n = r.below(4096) as usize;
+                let src = bytes(r, n);
+                let mut dst = vec![0u8; 16 * r.below(512) as usize];
+                let _ = victory_formats::bcpack::decode(bc, &src, &mut dst, &tables);
+                None
+            })
+        }
         "emit" => {
             use victory_shader::native::*;
             let mut container = b"DXBC".to_vec(); container.extend([0u8; 16]); container.extend(1u16.to_le_bytes()); container.extend(0u16.to_le_bytes()); container.extend(0x20u32.to_le_bytes()); container.extend(0u32.to_le_bytes());
@@ -275,7 +363,7 @@ fn main() {
                 None
             })
         }
-        _ => eprintln!("usage: vfuzz <decode|ir|dxbc|native|pe|xma|sgd5|emit|emit2> [iterations] [seed] | vfuzz show <file>"),
+        _ => eprintln!("usage: vfuzz <decode|ir|dxbc|native|pe|xma|sgd5|texture|bcpack|emit|emit2> [iterations] [seed] | vfuzz show <file>"),
     }
     TALLY.with(|t| { let mut v: Vec<_> = t.borrow().iter().map(|(k, n)| (*n, k.clone())).collect(); v.sort_by(|a, b| b.cmp(a)); for (n, k) in v.iter().take(25) { eprintln!("  {n:>8} {k}"); } });
 }
