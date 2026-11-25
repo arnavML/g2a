@@ -607,6 +607,29 @@ fn v_med3_f16_matches_rdna2_with_nan() {
     });
 }
 
+/// A select by a lane mask held as a number (a root constant, no compare
+/// made it) reads this lane's bit of that number. In compute that is a
+/// cross-lane read: the program must be lowered with the console's lane
+/// order (it used to trip that invariant's assertion).
+#[test]
+fn v_cndmask_by_a_numeric_mask_reads_the_lane_bit() {
+    // v_cndmask_b32_e64 v0, 0, 1, s0 (VOP3 0x101)
+    let body = vop3(0x101, 0, 0x80, 0x81, sgpr(0));
+    let shader = build_valu_cs(&body);
+    let cases: &[([u32; 4], u32)] = &[
+        ([1, 0, 0, 0], 1),
+        ([0, 0, 0, 0], 0),
+        ([0xFFFF_FFFE, 0, 0, 0], 0),
+        ([0xFFFF_FFFF, 0, 0, 0], 1),
+    ];
+    let inputs: Vec<[u32; 4]> = cases.iter().map(|c| c.0).collect();
+    // Cross-lane code declares WaveSize(32), which WARP's pipeline
+    // creation refuses: hardware only.
+    run_cases_on(&shader, &inputs, &[("hardware", false)], |backend, i, inp, got| {
+        assert_eq!(got, cases[i].1, "{backend}: lane 0 of mask {:#x}", inp[0]);
+    });
+}
+
 /// `v_cmp_lg_*` is "less or greater": ordered and not equal, so false when
 /// either operand is a NaN (RDNA2 ISA; the same on gfx1036 hardware).
 #[test]

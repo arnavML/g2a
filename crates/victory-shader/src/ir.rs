@@ -277,7 +277,7 @@ fn unspill(
     // per instruction the scalar codes it writes.
     let mut stores = [false; 256];
     let mut other = [false; 256];
-    let mut used = [false; 128];
+    let mut used = [false; 256];
     let mut parks: Vec<Option<(bool, u8, u8, u32)>> = Vec::with_capacity(list.len());
     let mut written: Vec<Vec<u8>> = Vec::with_capacity(list.len());
     let mut read: Vec<Vec<u8>> = Vec::with_capacity(list.len());
@@ -1578,6 +1578,19 @@ mod tests {
             .iter()
             .filter(|b| b.insts.last().is_some_and(|i| i.name() == "s_cbranch_execz"))
             .count()
+    }
+
+    /// A compare whose VOP3 scalar destination is a code past the SGPRs (a
+    /// malformed program: 254 is no register a compare can write) is
+    /// refused or built, never a panic in the scalar-parking scan.
+    #[test]
+    fn a_compare_into_a_high_scalar_code_does_not_panic() {
+        // v_cmp_eq_u32_e64 s254, v0, s0 (VOP3 0x0c2)
+        let words = [0xD4C2_00FEu32, 0x0000_0100, S_ENDPGM];
+        let code: Vec<u8> = words.iter().flat_map(|w| w.to_le_bytes()).collect();
+        for wave64 in [false, true] {
+            let _ = build(&code, wave64, 256);
+        }
     }
 
     #[test]

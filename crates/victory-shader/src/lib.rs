@@ -62,6 +62,7 @@ translation_inputs! {
     "emit/guest_address.rs",
     "emit/intersect.rs",
     "emit/lower.rs",
+    "emit/mask_reads.rs",
     "emit/mod.rs",
     "emit/own_bits.rs",
     "emit/packed_mask.rs",
