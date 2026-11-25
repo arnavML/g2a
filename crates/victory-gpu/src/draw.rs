@@ -380,7 +380,7 @@ fn mesh_kept(pipeline: usize) -> bool {
     let Some(at) = p.name.find("mesh ") else {
         return true;
     };
-    let hash = p.name[at + 5..].as_bytes();
+    let hash = &p.name.as_bytes()[at + 5..];
     if hash.len() < 16 {
         return true;
     }
@@ -2324,11 +2324,13 @@ impl State {
             // SAFETY: an open list with everything set.
             _ => {
                 set_tail(0);
+                // SAFETY: the list is open, and the pipeline, root signature and root arguments for this dispatch were bound above.
                 unsafe { list.list.Dispatch(x, y, z) };
             }
         }
         if let Some((param, word, _)) = tail {
             // Later ordinary or indirect dispatches use all lanes.
+            // SAFETY: `param` is a 32-bit constant slot of the bound root signature, and the list is still open.
             unsafe { list.list.SetComputeRoot32BitConstant(param, 0, word) };
         }
         #[cfg(feature = "diagnostics")]
@@ -2571,7 +2573,7 @@ impl State {
             return;
         }
         let words: Vec<u32> =
-            bytes.chunks_exact(4).map(|w| u32::from_le_bytes([w[0], w[1], w[2], w[3]])).collect();
+            bytes.as_chunks::<4>().0.iter().map(|w| u32::from_le_bytes(*w)).collect();
         let _ = write!(text, "\n    ~raw {label} at {address:#x} bytes {len}:");
         for w in &words {
             let _ = write!(text, " {w:08x}");
@@ -3962,6 +3964,7 @@ mod tests {
             0
         );
         // Own the title heap until after the recorded list releases all its slots.
+        // SAFETY: `create_heap` succeeded and left one owned reference in `object`; this wrapper releases it exactly once.
         let _owner = unsafe { IUnknown::from_raw(object.cast_mut().cast()) };
         let heap = crate::descriptor::heap(object);
         let list = host.new_list().unwrap();
@@ -3970,6 +3973,7 @@ mod tests {
         let code = crate::host::compile(signature, s!("main"), s!("cs_5_1")).unwrap();
         // SAFETY: the test heap and both one-entry tables match the root signature.
         let root: ID3D12RootSignature = unsafe { host.device.CreateRootSignature(0, &code).unwrap() };
+        // SAFETY: the list is open, and the heap and root signature outlive its execution in this test.
         unsafe {
             list.list.SetDescriptorHeaps(&[Some(heap.host().unwrap().heap.clone())]);
             list.list.SetComputeRootSignature(&root);
@@ -4018,6 +4022,7 @@ mod tests {
             );
             return;
         };
+        // SAFETY: the description borrows `root` without a reference and `code` outlives the call; both objects are returned to the caller.
         let pipeline = |source: &str| unsafe {
             let code = crate::host::compile(source, s!("main"), s!("cs_5_1")).unwrap();
             let root: ID3D12RootSignature = host.device.CreateRootSignature(0, &code).unwrap();
@@ -4083,6 +4088,7 @@ mod tests {
                     0
                 );
                 // Own the title reference. Its IUnknown::Release drops the title resource.
+                // SAFETY: the title create call returned one owned reference in `owner`; the pushed wrapper releases it exactly once.
                 owners.push(unsafe { IUnknown::from_raw(owner.cast_mut().cast()) });
             }
             let mut slots = [0u32; 16];
@@ -4119,6 +4125,7 @@ mod tests {
             heap.mirror(0, handle, true).unwrap();
             heap.make_at(1, &reader);
             readable(&list, ResourceType::Uav, &writer);
+            // SAFETY: the list is open; the heap, root signature and pipeline stay alive until `host.execute` below completes.
             unsafe {
                 list.list.SetDescriptorHeaps(&[Some(heap.heap.clone())]);
                 list.list.SetComputeRootSignature(&write_root);
@@ -4128,6 +4135,7 @@ mod tests {
                 list.list.Dispatch(1, 1, 1);
             }
             readable(&list, ResourceType::Srv, &reader);
+            // SAFETY: the list is still open, and every object it binds outlives the execution below.
             unsafe {
                 list.list.SetComputeRootSignature(&read_root);
                 list.list.SetPipelineState(&read_pso);
@@ -4145,6 +4153,7 @@ mod tests {
             }
             list.close();
             host.execute(&[&list]);
+            // SAFETY: the list has finished executing, so the readback buffer is idle; the mapped range is its first 64 bytes.
             unsafe {
                 let mut bytes = std::ptr::null_mut();
                 readback

@@ -437,7 +437,7 @@ mod card_tests {
     fn shader_piece(span: &CardSpan, i: u32) -> (u32, u32) {
         let piece = span.first + i;
         let lo = piece * 65536;
-        let lo = if lo > span.skew { lo - span.skew } else { 0 };
+        let lo = lo.saturating_sub(span.skew);
         let hi = (piece + 1) * 65536 - span.skew;
         (lo.max(span.from), hi.min(span.to))
     }
@@ -957,7 +957,7 @@ fn first_difference(a: &[u8], b: &[u8]) -> Option<usize> {
     let whole = a.len().min(b.len()) / 8 * 8;
     let from = a[..whole]
         .as_chunks::<8>().0.iter()
-        .zip(b[..whole].chunks_exact(8))
+        .zip(b[..whole].as_chunks::<8>().0)
         .position(|(x, y)| x != y)
         .map_or(whole, |word| word * 8);
     a[from..].iter().zip(&b[from..]).position(|(x, y)| x != y).map(|i| from + i)
@@ -971,7 +971,7 @@ fn last_difference(a: &[u8], b: &[u8]) -> Option<usize> {
     }
     let word = a[..whole]
         .as_chunks::<8>().0.iter()
-        .zip(b[..whole].chunks_exact(8))
+        .zip(b[..whole].as_chunks::<8>().0)
         .rposition(|(x, y)| x != y)?
         * 8;
     a[word..word + 8]

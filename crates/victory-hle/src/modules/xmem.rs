@@ -796,6 +796,7 @@ fn map(physical: &mut Physical, base: usize, len: usize, slice: Slice) -> bool {
     // already exactly one placeholder, the split fails but replacement works.
     // SAFETY: modify placeholder boundaries under PHYSICAL and the mapping guard.
     unsafe { VirtualFree(base as _, len, MEM_RELEASE | MEM_PRESERVE_PLACEHOLDER) };
+    // SAFETY: maps a section view only over the placeholder isolated above, while PHYSICAL and the mapping guard are held.
     let replace = || unsafe {
         MapViewOfFile3(
             slice.section.0,
@@ -811,10 +812,12 @@ fn map(physical: &mut Physical, base: usize, len: usize, slice: Slice) -> bool {
     };
     let mut view = replace();
     if view.Value.is_null() {
+        // SAFETY: reads this thread's last-error value.
         let initial_error = unsafe { GetLastError() };
         if join_placeholders(base, len) {
             view = replace();
         } else {
+            // SAFETY: restores this thread's last-error value.
             unsafe { SetLastError(initial_error) };
         }
     }
@@ -851,6 +854,7 @@ fn join_placeholders(base: usize, len: usize) -> bool {
     fn reserved_extent(at: usize) -> Option<(usize, usize)> {
         // SAFETY: VirtualQuery fills this structure without reading title memory.
         let mut info: MEMORY_BASIC_INFORMATION = unsafe { std::mem::zeroed() };
+        // SAFETY: VirtualQuery only inspects the address and fills the local `info` of the size passed.
         if unsafe { VirtualQuery(at as _, &mut info, size_of::<MEMORY_BASIC_INFORMATION>()) } == 0
             || info.State != MEM_RESERVE
             || info.AllocationProtect != PAGE_NOACCESS
@@ -1388,24 +1392,31 @@ mod tests {
         assert!(!base.is_null());
         let at = |i: usize| (base as usize + i * PAGE) as *mut c_void;
         assert_eq!(XMemMapPhysicalPages(at(2), 1, &pages[2]), at(2));
+        // SAFETY: page 2 of the reservation was just mapped read-write.
         unsafe { at(2).cast::<u8>().write(0x62) };
         // Both ends of this new view fall inside existing placeholders.
         // The neighbouring pages stay reserved, and the old page's contents survive.
         assert_eq!(XMemMapPhysicalPages(at(1), 3, pages[1..].as_ptr()), at(1));
         assert_eq!(query(at(0)).host.State, MEM_RESERVE);
         assert_eq!(query(at(4)).host.State, MEM_RESERVE);
+        // SAFETY: pages 1 to 3 are mapped read-write.
         assert_eq!(unsafe { at(2).cast::<u8>().read() }, 0x62);
+        // SAFETY: pages 1 to 3 are mapped read-write.
         unsafe { at(1).cast::<u8>().write(0x51) };
         // Split the three-page view again by aliasing its first page into
         // its middle, then restore the original three pages as one view.
         assert!(map_alias(at(2) as u64, at(1) as u64, PAGE as u64));
+        // SAFETY: page 2 is now an alias of page 1, mapped read-write.
         assert_eq!(unsafe { at(2).cast::<u8>().read() }, 0x51);
         assert_eq!(XMemMapPhysicalPages(at(1), 3, pages[1..].as_ptr()), at(1));
+        // SAFETY: pages 1 to 3 are mapped read-write again.
         assert_eq!(unsafe { at(1).cast::<u8>().read() }, 0x51);
+        // SAFETY: pages 1 to 3 are mapped read-write again.
         assert_eq!(unsafe { at(2).cast::<u8>().read() }, 0x62);
         assert_eq!(physical().views.get(&(at(1) as usize)).unwrap().0, 3 * PAGE);
         assert_eq!(XMemMapPhysicalPages(at(1), 3, std::ptr::null()), at(1));
         assert!(join_placeholders(base as usize, 5 * PAGE));
+        // SAFETY: the test's own reservation; its views were unmapped and the placeholders joined above.
         assert_ne!(unsafe { VirtualFree(base, 0, MEM_RELEASE) }, 0);
         assert_eq!(XMemFreePhysicalPages(5, pages.as_ptr()), 1);
     }

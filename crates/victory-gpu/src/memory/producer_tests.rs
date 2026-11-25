@@ -13,6 +13,7 @@ fn a_raw_gpu_write_follows_the_recorded_owner_of_a_reused_page() {
     // A page in the address range representable by the guest directory.
     let page = (0x1500..0x1600)
         .map(|i| i * 4 * CELL)
+        // SAFETY: VirtualAlloc at a fixed address either fails or returns a fresh page this test owns.
         .find(|&at| unsafe {
             !VirtualAlloc(
                 at as _,
@@ -27,6 +28,7 @@ fn a_raw_gpu_write_follows_the_recorded_owner_of_a_reused_page() {
     let old_owner = 1;
     let new_owner = 2;
     let cpu_pointer = 0x5123_abcd_u32;
+    // SAFETY: `field` is inside the committed page allocated above.
     unsafe { (field as *mut u32).write(cpu_pointer) };
     let mut memory = Memory::new().unwrap();
     let heap = HostHeap::new(false, 4).unwrap();
@@ -40,7 +42,9 @@ fn a_raw_gpu_write_follows_the_recorded_owner_of_a_reused_page() {
             if (entry.x) pages[entry.x].Store(entry.y + offset, marker);
         }"#;
     let code = crate::host::compile(source, s!("main"), s!("cs_5_1")).unwrap();
+    // SAFETY: `code` is a compiled root signature blob.
     let root: ID3D12RootSignature = unsafe { host.device.CreateRootSignature(0, &code) }.unwrap();
+    // SAFETY: `root` and `code` outlive the call; the description borrows the root signature without taking a reference.
     let pso: ID3D12PipelineState = unsafe {
         host.device
             .CreateComputePipelineState(&D3D12_COMPUTE_PIPELINE_STATE_DESC {
@@ -61,6 +65,7 @@ fn a_raw_gpu_write_follows_the_recorded_owner_of_a_reused_page() {
         let list = host.new_list().unwrap();
         list.keep(&memory.directory.0);
         let args = [(page / PAGE) as u32, (field - page) as u32, marker];
+        // SAFETY: the list is open and keeps the directory; the heap, root signature and pipeline outlive its execution.
         unsafe {
             list.list.SetDescriptorHeaps(&[Some(heap.heap.clone())]);
             list.list.SetComputeRootSignature(&root);
@@ -98,6 +103,7 @@ fn a_raw_gpu_write_follows_the_recorded_owner_of_a_reused_page() {
     let readback = host.read_back_buffer(24).unwrap();
     let copy = host.new_list().unwrap();
     for (i, backing) in [&retired, &current].into_iter().enumerate() {
+        // SAFETY: the list is open; both backings and the readback buffer outlive its execution, and each copy stays in bounds.
         unsafe {
             copy.list.CopyBufferRegion(
                 &readback,
@@ -111,6 +117,7 @@ fn a_raw_gpu_write_follows_the_recorded_owner_of_a_reused_page() {
     copy.close();
     host.execute(&[&copy]);
     let mut bytes = std::ptr::null_mut();
+    // SAFETY: the copy has completed; the mapped range is the 24 bytes the copies wrote.
     let words = unsafe {
         readback
             .Map(
@@ -123,8 +130,10 @@ fn a_raw_gpu_write_follows_the_recorded_owner_of_a_reused_page() {
         readback.Unmap(0, Some(&D3D12_RANGE::default()));
         words
     };
+    // SAFETY: `field` is inside the committed page, which is still allocated.
     let cpu_word = unsafe { (field as *const u32).read() };
     crate::shadow::unregister(new_owner, page);
+    // SAFETY: the test's own page, no longer used and unregistered above.
     assert_ne!(unsafe { VirtualFree(page as _, 0, MEM_RELEASE) }, 0);
     assert_eq!(
         cpu_word, cpu_pointer,

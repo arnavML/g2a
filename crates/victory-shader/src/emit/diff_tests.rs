@@ -1306,6 +1306,7 @@ fn shallow_water_reduces_four_independent_tiles_on_the_gpu() {
             .unwrap();
     validator.validate(&mut shader.dxil).unwrap();
     let host = Host::new(false).unwrap();
+    // SAFETY: a live device.
     let adapter = unsafe { host.device.GetAdapterLuid() };
     eprintln!(
         "dispatch on adapter {:08x}:{:08x}",
@@ -1360,13 +1361,15 @@ fn shallow_water_reduces_four_independent_tiles_on_the_gpu() {
             )
             .unwrap();
         assert_eq!(results[0].len(), 16);
-        for (pixel, want) in results[0].chunks_exact(4).zip(expected) {
+        for (pixel, want) in results[0].as_chunks::<4>().0.iter().zip(expected) {
             assert_eq!(pixel, &[want.to_bits(); 4], "title record count {count}");
         }
         eprintln!(
             "title record count {count}: {:?}",
             results[0]
-                .chunks_exact(4)
+                .as_chunks::<4>()
+                .0
+                .iter()
                 .map(|p| f32::from_bits(p[0]))
                 .collect::<Vec<_>>()
         );

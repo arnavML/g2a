@@ -241,8 +241,8 @@ fn verify_first_landing(back: &Back, tiled: &[u8]) {
                 let Ok(offset) = back.layout.offset(0, x, y, 0) else { continue };
                 let at = offset as usize;
                 let Some(texel) = guest.get(at..at + desc.element_bytes as usize) else { continue };
-                for bytes in texel.chunks_exact(4) {
-                    let value = f32::from_le_bytes(bytes.try_into().unwrap());
+                for bytes in texel.as_chunks::<4>().0 {
+                    let value = f32::from_le_bytes(*bytes);
                     if value.is_finite() {
                         finite += 1;
                         nonzero += usize::from(value != 0.0);

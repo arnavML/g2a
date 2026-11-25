@@ -2941,7 +2941,7 @@ mod tests {
         let row = width as usize * 4;
         let pitch = row + 12; // a title pitch with padding, independent of the host's
         let mut linear = vec![0u8; row * height as usize];
-        for (i, p) in linear.chunks_exact_mut(4).enumerate() {
+        for (i, p) in linear.as_chunks_mut::<4>().0.iter_mut().enumerate() {
             p.copy_from_slice(&(i as u32).wrapping_mul(0x9e3779b9).to_le_bytes());
         }
         let create = |desc: ResourceDesc| {
@@ -2980,6 +2980,7 @@ mod tests {
                 crate::texture::title_written(host_resource(image).unwrap()),
                 flags == 0
             );
+            // SAFETY: the image's guest allocation is `layout.size` bytes and nothing else references it during the test.
             let data = unsafe {
                 std::slice::from_raw_parts_mut(resource(image).data(), layout.size as usize)
             };
@@ -2998,6 +2999,7 @@ mod tests {
             let size = pitch * height as usize;
             let output = create(buffer(size as u64));
             let (out, _) = buffer_bytes(output).unwrap();
+            // SAFETY: `out` maps the whole output buffer, which is at least `size` bytes.
             unsafe { out.write_bytes(0xcd, size) };
             let mut list = null;
             assert_eq!(
@@ -3034,6 +3036,7 @@ mod tests {
             );
             host.execute(&[crate::list::host_list(list).unwrap()]);
             if expected {
+                // SAFETY: the list has completed; `out` maps at least `size` bytes.
                 let mapped = unsafe { std::slice::from_raw_parts(out, size) };
                 for (y, (actual, wanted)) in mapped
                     .chunks_exact(pitch)
@@ -4027,6 +4030,7 @@ float4 lit() : SV_Target { return 1.0; }
         for rgba in [0x12345678_u32, 0xdeadbeef] {
             let (upload, data) = host.upload_buffer(512).unwrap();
             let dst = D3D12_TEXTURE_COPY_LOCATION {
+                // SAFETY: copies the interface pointer without adding a reference; `texture` outlives the copy location.
                 pResource: unsafe { std::mem::transmute_copy(&texture.texture) },
                 Type: D3D12_TEXTURE_COPY_TYPE_SUBRESOURCE_INDEX,
                 Anonymous: D3D12_TEXTURE_COPY_LOCATION_0 { SubresourceIndex: 0 },
@@ -4036,6 +4040,7 @@ float4 lit() : SV_Target { return 1.0; }
                 Width: 2, Height: 2, Depth: 1, RowPitch: 256,
             };
             let src = D3D12_TEXTURE_COPY_LOCATION {
+                // SAFETY: copies the interface pointer without adding a reference; `upload` outlives the copy location.
                 pResource: unsafe { std::mem::transmute_copy(&upload) },
                 Type: D3D12_TEXTURE_COPY_TYPE_PLACED_FOOTPRINT,
                 Anonymous: D3D12_TEXTURE_COPY_LOCATION_0 {
@@ -4095,15 +4100,19 @@ float4 lit() : SV_Target { return 1.0; }
             }
             let (layout, at, size) = title_texture(title).unwrap();
             // Unwritten bytes inside the guest allocation must survive the copy-back.
+            // SAFETY: `at` and `size` describe the title texture's own committed guest allocation.
             unsafe { std::ptr::write_bytes(at as *mut u8, 0xcd, size) };
             let mut expected = vec![0xcd; size];
             let texture = host_copy(title).unwrap();
+            // SAFETY: a live host texture.
             let host_desc = unsafe { texture.texture.GetDesc() };
             let count = slices * u32::from(desc.mip_levels);
             let mut placed = vec![D3D12_PLACED_SUBRESOURCE_FOOTPRINT::default(); count as usize];
             let mut total = 0;
+            // SAFETY: `placed` has room for `count` footprints.
             unsafe { host.device.GetCopyableFootprints(&host_desc, 0, count, 0, Some(placed.as_mut_ptr()), None, None, Some(&mut total)) };
             let (upload, data) = host.upload_buffer(total).unwrap();
+            // SAFETY: `data` maps the `total` bytes of the fresh upload buffer, and nothing else uses it yet.
             let pattern = unsafe { std::slice::from_raw_parts_mut(data, total as usize) };
             let list = host.new_list().unwrap();
             crate::list::ensure_state(&list, title, D3D12_RESOURCE_STATE_COPY_DEST.0 as u32);
@@ -4123,15 +4132,18 @@ float4 lit() : SV_Target { return 1.0; }
                     }
                 }
                 let src = D3D12_TEXTURE_COPY_LOCATION {
+                    // SAFETY: copies the interface pointer without adding a reference; `upload` outlives the copy location.
                     pResource: unsafe { std::mem::transmute_copy(&upload) },
                     Type: D3D12_TEXTURE_COPY_TYPE_PLACED_FOOTPRINT,
                     Anonymous: D3D12_TEXTURE_COPY_LOCATION_0 { PlacedFootprint: *footprint },
                 };
                 let dst = D3D12_TEXTURE_COPY_LOCATION {
+                    // SAFETY: copies the interface pointer without adding a reference; the texture outlives the copy location.
                     pResource: unsafe { std::mem::transmute_copy(&texture.texture) },
                     Type: D3D12_TEXTURE_COPY_TYPE_SUBRESOURCE_INDEX,
                     Anonymous: D3D12_TEXTURE_COPY_LOCATION_0 { SubresourceIndex: index as u32 },
                 };
+                // SAFETY: the list is open, and both resources outlive its execution.
                 unsafe { list.list.CopyTextureRegion(&dst, 0, 0, 0, &src, None) };
             }
             list.texture_written(title);
@@ -4150,6 +4162,7 @@ float4 lit() : SV_Target { return 1.0; }
                 let gate = host.gate_queue_for_test();
                 let signal = std::thread::spawn(move || {
                     std::thread::sleep(std::time::Duration::from_millis(75));
+                    // SAFETY: the fence was created by `gate_queue_for_test` and lives in this closure.
                     unsafe { gate.Signal(1).unwrap() };
                 });
                 let producer = crate::list::Detached::for_test(list);
@@ -4168,6 +4181,7 @@ float4 lit() : SV_Target { return 1.0; }
                 host.execute(&[&list]);
                 drop(list);
             }
+            // SAFETY: the copy-back has completed; `at` and `size` are the title texture's committed guest allocation.
             let actual = unsafe { std::slice::from_raw_parts(at as *const u8, size) };
             assert_eq!(actual.iter().zip(&expected).position(|(a, b)| a != b), None, "dimension {dimension}");
             let mut second = null;
