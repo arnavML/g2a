@@ -55,7 +55,7 @@ fn structured(r: &mut Rng) -> Vec<u32> {
     let mut tries = 0;
     for _ in 0..n {
         let before = w.len();
-        let pick = r.below(12);
+        let pick = r.below(16);
         match pick {
             0..=2 => { let src1 = vreg(r); w.push((r.below(0x3F) as u32) << 25 | vreg(r) << 17 | src1 << 9 | vsrc(r)); }
             3..=4 => w.push(0x7E00_0000 | vreg(r) << 17 | (r.below(0x80) as u32) << 9 | vsrc(r)),
@@ -72,10 +72,24 @@ fn structured(r: &mut Rng) -> Vec<u32> {
             10 if !open.is_empty() => { // } : s_mov_b32 exec_lo, sN
                    let (at, save) = open.pop().unwrap(); w.push(0xBE80_0300 | 126 << 16 | save);
                    let skip = (w.len() - at - 1 - 1) as u32; w[at] = 0xBF88_0000 | skip; }
+            12 => { // buffer_load_dword vD, vA, s[8:11], 0 offen offset:k (vA masked to 0..1020 first)
+                   let (a, d) = (vreg(r), vreg(r));
+                   w.push(0x3600_00FF | 0x1B << 25 | a << 17 | a << 9); w.push(0x3FC); // v_and_b32 vA, 0x3fc, vA
+                   w.push(0x38 << 26 | 0x0C << 18 | 1 << 12 | 4 * r.below(16) as u32); w.push(0x80 << 24 | 2 << 16 | d << 8 | a); }
+            13 => { // ds_write_b32 / ds_add_u32 at a masked address
+                   let (a, d) = (vreg(r), vreg(r));
+                   w.push(0x3600_00FF | 0x1B << 25 | a << 17 | a << 9); w.push(0x3FC);
+                   let op = if r.below(2) == 0 { 0x0D } else { 0x00 };
+                   w.push(0x36 << 26 | op << 18 | r.below(16) as u32 * 4); w.push(d << 8 | a); }
+            14 => { // ds_read_b32 at a masked address
+                   let (a, d) = (vreg(r), vreg(r));
+                   w.push(0x3600_00FF | 0x1B << 25 | a << 17 | a << 9); w.push(0x3FC);
+                   w.push(0x36 << 26 | 0x36 << 18 | r.below(16) as u32 * 4); w.push(d << 24 | a); }
+            15 if open.is_empty() => w.push(0xBF8A_0000), // s_barrier, outside lane branches
             _ => { // sop2 on s0..s3 into s20..s30
                    w.push(0x8000_0000 | (r.below(0x36) as u32) << 23 | (20 + r.below(10) as u32) << 16 | (r.below(4) as u32) << 8 | r.below(4) as u32); }
         }
-        if !matches!(pick, 9 | 10) && w.len() > before && !ok(&w[before..]) { w.truncate(before); tries += 1; if tries < 2000 { continue; } }
+        if !matches!(pick, 9 | 10 | 12 | 13 | 14) && w.len() > before && !ok(&w[before..]) { w.truncate(before); tries += 1; if tries < 2000 { continue; } }
     }
     while let Some((at, save)) = open.pop() { w.push(0xBE80_0300 | 126 << 16 | save); let skip = (w.len() - at - 1 - 1) as u32; w[at] = 0xBF88_0000 | skip; }
     for k in 0..4u32 { w.push(0x38 << 26 | 0x1C << 18 | 4 * k); w.push(0x80 << 24 | 2 << 16 | (1 + k) << 8); }
@@ -123,7 +137,7 @@ fn check_dxil(dxil: &[u8], code: &[u8]) {
                     let first = e.lines().find(|l| l.contains("error")).unwrap_or(e.lines().next().unwrap_or("")).to_string();
                     tally(&format!("INVALID DXIL: {first}"));
                     let n = TALLY.with(|t| t.borrow().iter().filter(|(k, _)| k.starts_with("INVALID")).map(|(_, n)| *n).sum::<u64>());
-                    if n <= 200 { std::fs::write(format!("invalid-{n}.bin"), code).ok(); }
+                    if n <= 200 { std::fs::write(format!("invalid-{}-{n}.bin", std::process::id()), code).ok(); }
                 }
             }
         });
@@ -248,7 +262,7 @@ fn main() {
                         RootParam { root: RootType::Table, table_offset_dwords: 0, sgprs: 1, base_register: 0, user_data: 4, slot: 1 },
                     ],
                     used: vec![UsedResource { kind: ResourceType::Uav, root: RootType::Table, table_offset_dwords: 0, lower_bound: 0, stride: 0, dwords: 4, user_data: 4, slot: 1 }],
-                    io: StageIo::Cs(ComputeIo { rsrc2: 5 << 1 | (r.below(4) as u32) << 15, threads: [threads, 1, 1] }),
+                    io: StageIo::Cs(ComputeIo { rsrc2: 5 << 1 | 2 << 15, threads: [threads, 1, 1] }),
                     code,
                 };
                 let c = victory_shader::Container::parse(&container).unwrap();
