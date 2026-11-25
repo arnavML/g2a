@@ -1021,12 +1021,12 @@ impl Module {
         u
     }
 
-    /// A constant table no remaining load reads leaves the module (the
-    /// validator refuses an internal declaration nothing uses). Shared
-    /// memory stays declared whether it is read or not.
+    /// A constant table no remaining load reads, or shared memory nothing
+    /// touches any more (its accesses folded away), leaves the module: the
+    /// validator refuses an internal declaration nothing uses.
     fn drop_unused_tables(&mut self) {
-        let mut used: Vec<bool> = self.globals.iter().map(|g| g.init.is_none()).collect();
-        if used.iter().all(|&u| u) {
+        let mut used = vec![false; self.globals.len()];
+        if used.is_empty() {
             return;
         }
         for blk in &self.blocks {
@@ -1181,6 +1181,30 @@ mod tests {
         m.optimise(DEAD);
         assert_eq!(body(&m, b), 3, "the load, the add and the store");
         m.write();
+    }
+
+    /// Shared memory whose only access was dead leaves the module (the
+    /// validator refuses an unused internal declaration); shared memory a
+    /// store still writes stays.
+    #[test]
+    fn shared_memory_nothing_touches_is_dropped() {
+        for store in [false, true] {
+            let Kit { mut m, b, .. } = kit();
+            let i32t = m.int(32);
+            let arr = m.array(64, i32t);
+            let lds = m.global("lds", arr, 3);
+            let one = m.i32(1);
+            let ptr = m.element(b, lds, one);
+            if store {
+                m.store(b, ptr, one);
+            } else {
+                let _unread = m.load(b, ptr);
+            }
+            m.terminate(b, Term::Ret);
+            m.optimise(DEAD);
+            assert_eq!(m.globals.len(), usize::from(store), "store: {store}");
+            m.write();
+        }
     }
 
     #[test]
