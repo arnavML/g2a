@@ -1370,11 +1370,13 @@ mod title_memory_tests {
         // committed and live until its resource and staging have been released.
         let desc = unsafe { std::mem::transmute::<[u32; 14], crate::resource::ResourceDesc>(words) };
         let page = 64 << 10;
+        // SAFETY: a fresh private allocation, checked for null below.
         let memory = unsafe {
             VirtualAlloc(std::ptr::null(), 2 * page, MEM_RESERVE | MEM_COMMIT, PAGE_READWRITE)
         };
         assert!(!memory.is_null());
         let at = memory as usize;
+        // SAFETY: the allocation above is `2 * page` committed bytes.
         unsafe { memory.cast::<u8>().write_bytes(0x57, 2 * page) };
         let mut title = std::ptr::null();
         assert_eq!(crate::resource::create_at_address(std::ptr::null_mut(), at as u64, &desc,

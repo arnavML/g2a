@@ -897,8 +897,8 @@ fn reflected_rays_walk_linked_nodes_through_the_guest_directory() {
                 "resident rays should not fault"
             );
             let mut hits = Vec::new();
-            for (&id, words) in leaves.iter().zip(tri[0].chunks_exact(4)) {
-                let [t, det, u, v] = <[u32; 4]>::try_from(words).unwrap().map(f32::from_bits);
+            for (&id, words) in leaves.iter().zip(tri[0].as_chunks::<4>().0) {
+                let [t, det, u, v] = words.map(f32::from_bits);
                 let distance = t / det;
                 if distance > 1e-4 && distance <= ray.extent {
                     hits.push((id, distance, u / det, v / det));

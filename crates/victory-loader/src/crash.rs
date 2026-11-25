@@ -722,7 +722,7 @@ mod tests {
         let log = std::fs::read_to_string(file).unwrap();
         let lines: Vec<_> = log.lines().collect();
         assert_eq!(lines.len(), 4 * 16 * 3);
-        for record in lines.chunks_exact(3) {
+        for record in lines.as_chunks::<3>().0 {
             assert!(record[0].starts_with("unix time "));
             assert!(record[0].ends_with(&format!(", process {}", std::process::id())));
             assert_eq!(

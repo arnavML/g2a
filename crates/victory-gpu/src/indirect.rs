@@ -417,6 +417,7 @@ fn record_clamp_as(
         ),
     ];
     let skip = usize::from(!waits);
+    // SAFETY: the list `l` is open, and `c`'s root signature and pipeline, and `dst`, outlive the recorded commands.
     unsafe {
         // Earlier shader writes (the title's argument and count passes) first.
         l.ResourceBarrier(&first[skip..]);
@@ -745,7 +746,7 @@ void main() {
         };
         let run = |warp: &mut WarpHarness, mode| run_span(warp, mode, 0, 0, PIECES, 0);
         let at = PIECE + 1234;
-        // SAFETY (each): inside the mapping.
+        // SAFETY: (each) inside the mapping.
         let set = |value: u8| unsafe { now_ptr.add(at).write_volatile(value) };
         // 0: the hashes are stored, nothing is flagged.
         assert_eq!(run(&mut warp, 0), [UNWRITTEN; 3]);
@@ -774,6 +775,7 @@ void main() {
         let write = |at: usize, value| {
             // SAFETY: tests use offsets within the live buffer, between completed passes.
             assert!(at < size);
+            // SAFETY: `at < size` was checked above, `now_ptr` maps `size` live bytes, and the card is idle between passes.
             unsafe { now_ptr.add(at).write_volatile(value) };
         };
         // Probe every page and all four 16-byte loads in its final
@@ -1220,7 +1222,7 @@ void main() {
             };
             for (i, groups) in filled.into_iter().enumerate() {
                 let rec = &out[i * 8..i * 8 + 4];
-                assert_eq!(rec, [groups, u32::from(groups > 0).max(1).min(1), 1, 0xAB00 + i as u32], "filled record {i}, ahead {ahead}");
+                assert_eq!(rec, [groups, 1, 1, 0xAB00 + i as u32], "filled record {i}, ahead {ahead}");
             }
             let charged_filled = (5 + 519) * 128;
             if ahead {

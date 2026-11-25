@@ -4211,6 +4211,7 @@ impl Host {
 
     #[cfg(test)]
     pub(crate) fn gate_queue_for_test(&self) -> ID3D12Fence {
+        // SAFETY: a fresh fence on this device; the queue waits on it until the caller signals it.
         unsafe {
             let gate: ID3D12Fence = self.device.CreateFence(0, D3D12_FENCE_FLAG_NONE).unwrap();
             self.queue.Wait(&gate, 1).unwrap();
@@ -6329,6 +6330,7 @@ fn read_sparse(src: *const u8, dst: *mut u8, len: usize) {
         let remaining = len - offset;
         // SAFETY: the query inspects an address and fills a local structure.
         let mut info: MEMORY_BASIC_INFORMATION = unsafe { std::mem::zeroed() };
+        // SAFETY: VirtualQuery only inspects the address and fills the local `info` of the size passed.
         let size = unsafe { VirtualQuery(at.cast(), &mut info, size_of_val(&info)) };
         let n = (info.BaseAddress as usize).saturating_add(info.RegionSize)
             .saturating_sub(at as usize).min(remaining);

@@ -65,6 +65,7 @@ fn copy_counters(list: &HostList, faults: &ID3D12Resource) -> Option<ID3D12Resou
     // The CPU reads the private snapshot only after this list's fence.
     let uav = D3D12_RESOURCE_STATE_UNORDERED_ACCESS;
     let copy = D3D12_RESOURCE_STATE_COPY_SOURCE;
+    // SAFETY: the list is open; `faults` and `readback` outlive its execution, and the copy stays inside both.
     unsafe {
         list.list.ResourceBarrier(&[transition(faults, uav, copy)]);
         list.list
@@ -135,6 +136,7 @@ mod tests {
         host.execute(&[&list]);
         assert_eq!(observed.get(), Some(&expected));
         assert_eq!(
+            // SAFETY: the list has completed, and the mapped readback holds MEMORY_FAULTS dwords.
             unsafe { mapped.add(MEMORY_FAULTS as usize - 1).read() },
             0xfeed1234
         );

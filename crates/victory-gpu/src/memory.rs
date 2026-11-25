@@ -220,6 +220,7 @@ impl Memory {
         crate::host::name(&buffer, || format!("title memory by address: {what}"));
         // SAFETY: a fresh mapped buffer of the requested length.
         unsafe { std::ptr::write_bytes(data, 0, (dwords * 4) as usize) };
+        // SAFETY: `buffer` is a live committed buffer.
         let gpu = unsafe { buffer.GetGPUVirtualAddress() };
         Some((buffer, data.cast(), gpu))
     }
@@ -232,6 +233,7 @@ impl Memory {
         let shadow = crate::shadow::find(start, 1)
             .filter(whole)
             .or_else(|| crate::shadow::find(start, PAGE).filter(whole))?;
+        // SAFETY: `shadow.buffer` is a live resource owned by the shadow.
         let flags = unsafe { shadow.buffer.GetDesc() }.Flags;
         if flags.0 & D3D12_RESOURCE_FLAG_ALLOW_UNORDERED_ACCESS.0 == 0 {
             return None;
@@ -616,10 +618,12 @@ mod tests {
         };
         let pages = SPECULATIVE_COPIES as u64 + 6;
         let bytes = (pages * PAGE) as usize;
+        // SAFETY: VirtualAlloc at a fixed address either fails or returns a fresh allocation this test owns.
         let start = (0x300..0x340).map(|i| i * 32 * CELL).find(|&at| unsafe {
             !VirtualAlloc(at as _, bytes, MEM_RESERVE | MEM_COMMIT, PAGE_READWRITE).is_null()
         }).unwrap();
         let mut memory = Memory::new().unwrap();
+        // SAFETY: the directory mapping holds two dwords for every page in its range, and `at` is inside it.
         let slot = |m: &Memory, at| unsafe { m.directory.1.add((at / PAGE * 2) as usize).read() };
         for i in 0..SPECULATIVE_COPIES as u64 - 1 {
             let at = start + i * PAGE;
@@ -656,10 +660,12 @@ mod tests {
             }"#;
         let code = crate::host::compile(shader, windows::core::s!("main"), windows::core::s!("cs_5_1")).unwrap();
         let root: windows::Win32::Graphics::Direct3D12::ID3D12RootSignature =
+            // SAFETY: `code` is a compiled root signature blob.
             unsafe { host.device.CreateRootSignature(0, &code) }.unwrap();
         use windows::Win32::Graphics::Direct3D12::{
             D3D12_COMPUTE_PIPELINE_STATE_DESC, D3D12_SHADER_BYTECODE, ID3D12PipelineState,
         };
+        // SAFETY: `root` and `code` outlive the call; the description borrows the root signature without taking a reference.
         let pso: ID3D12PipelineState = unsafe {
             host.device.CreateComputePipelineState(&D3D12_COMPUTE_PIPELINE_STATE_DESC {
                 pRootSignature: std::mem::transmute_copy(&root),
@@ -671,6 +677,7 @@ mod tests {
         let bucket = 1 + page % (victory_shader::emit::MEMORY_FAULTS - 1);
         let lookup = |m: &Memory| {
             let list = host.new_list().unwrap();
+            // SAFETY: the list is open, and the root signature, pipeline and both buffers outlive the execution below.
             unsafe {
                 list.list.SetComputeRootSignature(&root);
                 list.list.SetPipelineState(&pso);
@@ -681,6 +688,7 @@ mod tests {
             }
             list.close();
             host.execute(&[&list]);
+            // SAFETY: the list has completed, and `bucket` is below MEMORY_FAULTS, the length of the mapped fault buffer.
             unsafe { m.faults.1.add(bucket as usize).read_volatile() }
         };
         assert_eq!(lookup(&memory), page);
@@ -710,6 +718,7 @@ mod tests {
             let at = start + i * PAGE;
             crate::shadow::unregister(at as usize, at);
         }
+        // SAFETY: the test's own allocation, no longer used and unregistered above.
         assert_ne!(unsafe { VirtualFree(start as _, 0, MEM_RELEASE) }, 0);
     }
 
@@ -752,13 +761,16 @@ mod tests {
         let mut memory = Memory::new().unwrap();
         // Reserve three 4 MiB cells in guest address space. Only the first
         // page of each is a title buffer; the middle one has no AS descriptor.
+        // SAFETY: VirtualAlloc at a fixed address either fails or returns a fresh reservation this test owns.
         let start = (0x1300..0x1400).map(|i| i * 4 * CELL).find(|&at| unsafe {
             !VirtualAlloc(at as _, (3 * CELL) as usize, MEM_RESERVE, PAGE_READWRITE).is_null()
         }).unwrap();
         for at in [start, start + CELL, start + 2 * CELL] {
+            // SAFETY: commits one page inside the reservation made above.
             assert_eq!(unsafe { VirtualAlloc(at as _, PAGE as usize, MEM_COMMIT, PAGE_READWRITE) } as u64, at);
             crate::shadow::register(at as usize, at, PAGE);
         }
+        // SAFETY: the directory mapping holds two dwords for every page in its range, and `at` is inside it.
         let directory_slot = |m: &Memory, at| unsafe {
             m.directory.1.add((at / PAGE * 2) as usize).read()
         };
@@ -793,6 +805,7 @@ mod tests {
         memory.prepare_addresses(&heap, &[], &[scalar]);
         assert_eq!(directory_slot(&memory, start + CELL), 0);
         assert_eq!(memory.copies.len(), 2);
+        // SAFETY: index 1 is inside the mapped fault buffer, and no list is executing.
         unsafe { memory.faults.1.add(1).write(((start + CELL) / PAGE) as u32) };
         memory.take_faults();
         assert_ne!(directory_slot(&memory, start + CELL), 0);
@@ -814,6 +827,7 @@ mod tests {
         for at in [start, start + CELL, start + 2 * CELL] {
             crate::shadow::unregister(at as usize, at);
         }
+        // SAFETY: the test's own reservation, no longer used and unregistered above.
         assert_ne!(unsafe { VirtualFree(start as _, 0, MEM_RELEASE) }, 0);
     }
 
